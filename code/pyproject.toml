@@ -1,0 +1,15 @@
+[project]
+name = "code"
+version = "0.1.0"
+description = "Hackerank Finance Agent"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "duckdb>=1.5.5",
+    "openai-agents[litellm]>=0.22.2",
+    "python-dotenv>=1.0.0",
+    "rapidocr>=2.0.0",
+    "onnxruntime>=1.16.0",
+    "pillow>=10.0.0",
+    "pytz>=2026.3.post1",
+]
