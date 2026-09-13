@@ -43,6 +43,13 @@ def _fmt_plan(plan_str: str) -> str:
 
 
 def explain(state, plan, facts: dict, draft: str = "") -> str:
+    from tools import cache
+
+    key = str(state.request.get("request_id") or "")
+    if key:
+        cached = cache.lookup("aggregator", key)
+        if cached:
+            return cached
     facts_brief = {
         "home_currency": state.profile.home_currency,
         "current_available_balance": state.profile.current_available_balance,
@@ -64,4 +71,7 @@ def explain(state, plan, facts: dict, draft: str = "") -> str:
     result = Runner.run_sync(build_agent(), prompt)
     if result.raw_responses:
         TRACKER.record(SETTINGS.model_for("aggregator"), result.raw_responses[-1].usage)
-    return result.final_output.decision_explanation.strip()
+    text = result.final_output.decision_explanation.strip()
+    if key and text:
+        cache.upsert("aggregator", key, text)
+    return text

@@ -35,7 +35,10 @@ def _one_time_future_flows(state: UserFinancialState, end: date, recurring_keys:
     """Scheduled + pending-debit cash flows not already covered by a recurring flow."""
     as_of = state.request_date
     buckets: dict[date, float] = defaultdict(float)
+    superseded = state.superseded_event_ids()
     for e in state.events:
+        if e.event_id in superseded:
+            continue
         if e.direction not in ("debit", "credit") or e.status in _IGNORE_STATUS or e.amount is None:
             continue
         when = e.settlement_date or e.event_date

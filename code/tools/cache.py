@@ -50,3 +50,27 @@ def upsert(agent_name: str, key: str, value: str) -> None:
     entries[key] = value
     doc = _SEP.join(f"KEY: {k}\n{entries[k]}" for k in order)
     _cache_path(agent_name).write_text(doc + "\n")
+
+
+def invalidate(agent_name: str, key: str) -> bool:
+    """Drop a single cached entry. Returns True if the key existed."""
+    raw = read_cache(agent_name)
+    entries: dict[str, str] = {}
+    order: list[str] = []
+    found = False
+    for chunk in raw.split(_SEP):
+        if not chunk.strip():
+            continue
+        head, _, body = chunk.partition("\n")
+        k = head.strip().removeprefix("KEY:").strip()
+        if k == key:
+            found = True
+            continue
+        if k and k not in entries:
+            order.append(k)
+        entries[k] = body.strip()
+    if not found:
+        return False
+    doc = _SEP.join(f"KEY: {k}\n{entries[k]}" for k in order)
+    _cache_path(agent_name).write_text((doc + "\n") if doc else "")
+    return True

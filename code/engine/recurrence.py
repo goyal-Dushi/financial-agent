@@ -34,7 +34,10 @@ def detect_recurring(state: UserFinancialState) -> list[RecurringFlow]:
     future_dates: dict[tuple[str, str], list[date]] = defaultdict(list)
     hist_last: dict[tuple[str, str], date] = {}
 
+    superseded = state.superseded_event_ids()
     for e in state.events:
+        if e.event_id in superseded:
+            continue
         # Scheduled occurrences (e.g. the next confirmed salary) are a known repeat of
         # a recurring flow and count toward cadence; forecast de-dupes them from one-time.
         if e.status not in ("settled", "scheduled") or e.direction not in ("debit", "credit"):

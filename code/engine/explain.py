@@ -48,11 +48,18 @@ def _recommendation(state: UserFinancialState, plan) -> str:
         per = _fmt(plan.payments[0][1])
         first, last = plan.payments[0][0], plan.payments[-1][0]
         fee = _financing_fee(state, plan)
-        fee_txt = f" (includes a {_fmt(fee)} {cur} financing fee)" if fee else ""
-        opt = f", {plan.payment_option_id}" if plan.payment_option_id else ""
+        if plan.payment_option_id:
+            detail = f" ({plan.payment_option_id}"
+            if fee:
+                detail += f", includes a {_fmt(fee)} {cur} financing fee"
+            detail += ")"
+        elif fee:
+            detail = f" (includes a {_fmt(fee)} {cur} financing fee)"
+        else:
+            detail = ""
         return (
             f"Recommendation: pay {n} installments of {per} {cur} from {_d(first)} to "
-            f"{_d(last)}{fee_txt}{opt}, completing the {req} {cur} request by the {deadline} deadline."
+            f"{_d(last)}{detail}, completing the {req} {cur} request by the {deadline} deadline."
         )
 
     if plan.method == "partial_payment":
@@ -101,26 +108,26 @@ def _why(state: UserFinancialState, plan) -> str:
         )
     else:
         parts.append(f"{_fmt(safe)} {cur} is safe to pay on the request date")
-
-    if plan.earliest_full_date:
-        if plan.earliest_full_date == state.request_date and plan.method != "full_payment":
-            parts.append(
-                "the full amount is already safe as a single payment but full payment is "
-                "excluded by the user's stated payment preferences"
-            )
+        if plan.earliest_full_date:
+            if plan.earliest_full_date == state.request_date and plan.method != "full_payment":
+                parts.append(
+                    "the full amount is already safe as a single payment but full payment is "
+                    "excluded by the user's stated payment preferences"
+                )
+            else:
+                parts.append(
+                    f"the full amount is forecast safe as a single payment from {_d(plan.earliest_full_date)}"
+                )
         else:
-            parts.append(
-                f"the full amount is forecast safe as a single payment from {_d(plan.earliest_full_date)}"
-            )
-    else:
-        parts.append("the full amount is not expected to become safe within the 90-day forecast")
+            parts.append("the full amount is not expected to become safe within the 90-day forecast")
 
     if plan.spending_changes_needed and plan.spending_changes_needed != "none":
         parts.append(f"spending changes required: {plan.spending_changes_needed}")
     else:
         parts.append("no spending changes are required")
 
-    return "; ".join(parts).capitalize() + "."
+    text = "; ".join(parts)
+    return text[0].upper() + text[1:] + "."
 
 
 def build_explanation(state: UserFinancialState, plan) -> str:

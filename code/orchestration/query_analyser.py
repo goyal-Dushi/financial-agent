@@ -47,10 +47,23 @@ def build_agent() -> Agent:
 def analyse(request_row: dict) -> QueryAnalysis:
     from agents import Runner
 
+    from tools import cache
+
+    key = str(request_row.get("request_id") or "")
+    if key:
+        cached = cache.lookup("query_analyser", key)
+        if cached:
+            try:
+                return QueryAnalysis.model_validate_json(cached)
+            except Exception:
+                pass
     prompt = (
         "Analyse this request row (fields are self-describing):\n"
         + "\n".join(f"{k}={v}" for k, v in request_row.items() if k != "decision_explanation")
     )
     result = Runner.run_sync(build_agent(), prompt)
     TRACKER.record(SETTINGS.model_for("query_analyser"), result.raw_responses[-1].usage if result.raw_responses else None)
-    return result.final_output
+    analysis = result.final_output
+    if key:
+        cache.upsert("query_analyser", key, analysis.model_dump_json())
+    return analysis

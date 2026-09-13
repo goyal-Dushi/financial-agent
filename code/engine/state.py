@@ -97,6 +97,7 @@ class UserFinancialState:
     messages: list[dict]
     images: list[dict]
     rates: dict = field(repr=False, default_factory=dict)
+    events_by_id: dict[str, Event] = field(repr=False, default_factory=dict)
 
     @property
     def request_date(self) -> date:
@@ -113,6 +114,41 @@ class UserFinancialState:
     @property
     def allows_partial(self) -> bool:
         return str(self.request.get("allows_partial_payment", "")).strip().lower() == "true"
+
+    def linked_event(self, event: Event) -> Event | None:
+        """Earlier event in the same transaction or investment lifecycle, if any."""
+        if not event.linked_event_id:
+            return None
+        return self.events_by_id.get(event.linked_event_id)
+
+    def superseded_event_ids(self) -> set[str]:
+        """Event ids to ignore because a newer linked event supersedes them.
+
+        A cancelled/failed original is represented by its linked replacement; and
+        when a link points at a same-direction/category/amount event, the later row
+        is the effective one, so the earlier row must not be counted twice.
+        """
+        ignore: set[str] = set()
+        active = {"settled", "scheduled", "pending"}
+        cash = {"debit", "credit"}
+        for e in self.events:
+            other = self.events_by_id.get(e.linked_event_id) if e.linked_event_id else None
+            if other is None:
+                continue
+            if other.status in ("cancelled", "failed"):
+                ignore.add(other.event_id)
+            elif (
+                other.status in active
+                and e.status in active
+                and other.direction in cash
+                and other.direction == e.direction
+                and other.category == e.category
+                and other.amount is not None
+                and e.amount is not None
+                and abs(other.amount - e.amount) < 0.01
+            ):
+                ignore.add(other.event_id)
+        return ignore
 
 
 class RateBook:
@@ -181,6 +217,16 @@ def load_state(user_id: str, request_id: str, amount_overrides: dict[str, float]
     ev_rows = db.run_sql(
         f"SELECT * FROM financial_events WHERE user_id = '{user_id}' ORDER BY event_date"
     )
+    # linked_event_id points at an earlier event in the same lifecycle (same file,
+    # usually the same user). Pull any linked target that is not already loaded so
+    # the transaction/investment chain is complete.
+    have = {r["event_id"] for r in ev_rows}
+    missing = {r.get("linked_event_id") for r in ev_rows if r.get("linked_event_id")} - have
+    if missing:
+        quoted = ",".join(f"'{m}'" for m in sorted(missing))
+        ev_rows += db.run_sql(
+            f"SELECT * FROM financial_events WHERE event_id IN ({quoted}) ORDER BY event_date"
+        )
     overrides = amount_overrides or {}
     events: list[Event] = []
     for r in ev_rows:
@@ -239,6 +285,7 @@ def load_state(user_id: str, request_id: str, amount_overrides: dict[str, float]
         messages=msg_rows,
         images=img_rows,
         rates=RateBook(rate_rows),
+        events_by_id={e.event_id: e for e in events},
     )
 
 
