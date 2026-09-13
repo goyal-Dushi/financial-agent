@@ -25,13 +25,17 @@ Query Analyser ──► Data Generator ──► deterministic engine ──►
 
 ## Setup
 
-Requires Python 3.13+.
+Requires Python 3.13+ (pinned in `.python-version`). This project is managed
+with [uv](https://docs.astral.sh/uv/); `uv.lock` is committed for reproducible
+installs.
 
 ```bash
 cd code
-python -m venv .venv && source .venv/bin/activate
-pip install -e .          # or: uv sync
+uv sync                    # creates .venv and installs exact locked deps
 ```
+
+`uv sync` reads the committed `.python-version` and `uv.lock`, so no manual
+virtualenv or interpreter management is needed.
 
 Create `.env` at the repo root (or `code/.env`) from the template:
 
@@ -54,13 +58,14 @@ Secrets are read from the environment only and are never logged.
 
 ## Run
 
-Run all commands from `code/`. See `execution.md` for the full flag reference.
+Run all commands from `code/` using `uv run` (no manual activation needed).
+See `execution.md` for the full flag reference.
 
 ```bash
-python main.py                 # full 250-request agentic run -> code/output.csv
-python main.py --skip-agents   # deterministic only (no LLM/key needed)
-python main.py --sample --skip-agents   # 25 public examples self-check
-python main.py --request-id request_105 # one request
+uv run main.py                 # full 250-request agentic run -> code/output.csv
+uv run main.py --skip-agents   # deterministic only (no LLM/key needed)
+uv run main.py --sample --skip-agents   # 25 public examples self-check
+uv run main.py --request-id request_105 # one request
 ```
 
 The final CSV is written to `code/output.csv` with the columns:
@@ -69,7 +74,7 @@ The final CSV is written to `code/output.csv` with the columns:
 request_id,amount_safe_to_pay,affordability_status,recommended_payment_method,payment_plan,earliest_date_for_full_payment,spending_changes_needed,decision_explanation
 ```
 
-`python db_query.py` joins the requests with `output.csv` and writes
+`uv run db_query.py` joins the requests with `output.csv` and writes
 `code/aggregate.csv` for inspection.
 
 ## Notes on evidence
