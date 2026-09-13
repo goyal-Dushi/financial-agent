@@ -1,6 +1,6 @@
 """Buy or Wait? — single entry point.
 
-python main.py                # full 250-request run -> repo-root output.csv
+python main.py                # full 250-request run -> code-root output.csv
 python main.py --limit 5      # first 5 requests
 python main.py --request-id request_26
 python main.py --skip-agents  # deterministic engine only (no LLM calls)
@@ -23,6 +23,14 @@ from datetime import datetime
 from pathlib import Path
 
 from config import SETTINGS
+
+try:  # this project is OpenRouter-only; OpenAI tracing is not used.
+    from agents import set_tracing_disabled
+
+    set_tracing_disabled(True)
+except Exception:
+    pass
+
 from engine import evidence, explain as explainer, planning, state as S, validation
 from tools import db
 from tools import ocr_tools
@@ -63,18 +71,24 @@ def _load_requests(limit: int | None, only_request_id: str | None, sample: bool)
     return rows
 
 
-def build_row(request: dict, use_agents: bool) -> dict:
+def build_row(request: dict, use_agents: bool, refresh_images: bool = False) -> dict:
     user_id = request["user_id"]
     request_id = request["request_id"]
 
     if use_agents:
-        from orchestration import aggregator, data_generator, query_analyser
+        from orchestration import data_generator, query_analyser
 
         try:
             log_step(request_id, user_id, "Query Analyser", "analysing request intent")
             query_analyser.analyse(request)
-            log_step(request_id, user_id, "Data Generator", "gathering per-user data (Vision/OCR)")
-            data_generator.generate(_analysis_stub(request), user_id, request_id)
+            analysis = _analysis_stub(request)
+            log_step(request_id, user_id, "Data Generator", "gathering per-user data")
+            data_generator.generate(analysis, user_id, request_id)
+            if analysis.needs_image:
+                from orchestration import vision_ocr_agent
+
+                log_step(request_id, user_id, "Vision", "extracting image text (RapidOCR) and facts (LLM)")
+                vision_ocr_agent.read_images_for(user_id, request_id, force=refresh_images)
         except Exception as exc:  # keep the run going; engine is authoritative
             log_step(request_id, user_id, "Agents", "degraded; using deterministic engine")
             print(f"  [warn] agent stage degraded for {request_id}: {exc}", file=sys.stderr)
@@ -82,7 +96,9 @@ def build_row(request: dict, use_agents: bool) -> dict:
     # Deterministic: resolve blank amounts from images, then load state with overrides.
     log_step(request_id, user_id, "Evidence", "resolving blank amounts from images/messages")
     prelim = S.load_state(user_id, request_id, request_row=request)
-    overrides = evidence.resolve_blank_amounts(prelim)
+    if prelim.images:
+        log_step(request_id, user_id, "Vision", f"RapidOCR reading {len(prelim.images)} linked image(s)")
+    overrides = evidence.resolve_blank_amounts(prelim, force=refresh_images)
     log_step(request_id, user_id, "State", "reconstructing financial position")
     state = S.load_state(user_id, request_id, amount_overrides=overrides, request_row=request)
     facts = {"highlights": [m["excerpt"] for m in evidence.extract_message_facts(state)][:3]}
@@ -117,6 +133,18 @@ def build_row(request: dict, use_agents: bool) -> dict:
     return row
 
 
+def _has_linked_image(request: dict) -> bool:
+    user_id = request.get("user_id", "")
+    request_id = request.get("request_id", "")
+    try:
+        rows = db.run_sql(
+            f"SELECT image_id FROM images WHERE user_id = '{user_id}' OR request_id = '{request_id}'"
+        )
+        return bool(rows)
+    except Exception:
+        return False
+
+
 def _analysis_stub(request: dict):
     from orchestration.query_analyser import QueryAnalysis
 
@@ -127,7 +155,7 @@ def _analysis_stub(request: dict):
         implied_joins=["user_id", "request_id", "related_event_id"],
         expected_output=OUTPUT_COLUMNS,
         constraints=["minimum_balance_to_keep", "desired_completion_date", "home_currency"],
-        needs_image=False,
+        needs_image=_has_linked_image(request),
     )
 
 
@@ -146,8 +174,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--request-id", help="process a single request_id")
     parser.add_argument("--sample", action="store_true", help="run the 25 public sample requests")
     parser.add_argument("--skip-agents", action="store_true", help="deterministic engine only (no LLM)")
-    parser.add_argument("--out", default=str(SETTINGS.root_output_csv), help="output CSV path")
+    parser.add_argument("--out", default=str(SETTINGS.output_csv), help="output CSV path")
     parser.add_argument("--quiet", action="store_true", help="suppress step-by-step progress logs")
+    parser.add_argument("--refresh-images", action="store_true", help="re-OCR and re-read images, overriding cached text")
     args = parser.parse_args(argv)
 
     QUIET = args.quiet
@@ -161,7 +190,7 @@ def main(argv: list[str] | None = None) -> int:
         request_id = request["request_id"]
         user_id = request["user_id"]
         log_step(request_id, user_id, "Request", f"start ({i}/{len(requests)})")
-        row = build_row(request, use_agents)
+        row = build_row(request, use_agents, refresh_images=args.refresh_images)
         errors = validation.validate_row(row, request)
         if errors:
             print(f"  [!] {request_id} validation: {errors}", file=sys.stderr)
